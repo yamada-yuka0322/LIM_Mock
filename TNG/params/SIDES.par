@@ -1,0 +1,39 @@
+##### Parameters used to generate SFR properties #####
+
+#Parameters to derive the quenched fraction
+alpha1 =  0.223213
+alpha2 = 0.0912848
+beta1 = 0.0417672
+beta2 = -0.0158969
+gamma = -1.03861
+Mt0 = 10.5296
+qfrac0 = 0.101681
+sigma0 = 0.848799
+
+#Parameters for the evolution of the main sequence fom Schreiber et al.
+m0 = 0.5
+a0 = 1.5
+a1 = 0.3
+m1 = 0.36
+a2 = 2.5
+
+#Main sequence scatter parameters
+sigma_MS = 0.3 #SIDES assume sigma_sb equal sigma_ms
+logBsb = np.log10(5.3)
+logx0 = np.log10(0.87)
+
+#Evolution of the fraction of starburst (based on Sargent+12)
+Psb_hz = 0.03
+slope_Psb = -0.015
+z_Psb_knee = 1.
+
+#conversion from Chabrier to Salpeter IMF, used because Schreiber is in Salpeter
+Chab2Salp = 10.**0.24
+
+#Correction at low-z of the Schreiber relation (see Bethermin+17)
+zmean_lowzcorr = 0.2185
+corr_zmean_lowzcorr = -0.1
+zmax_lowzcorr = 0.5
+
+#Maximum SFR allowed
+SFR_max = 1000.
