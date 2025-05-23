@@ -20,19 +20,19 @@ x0=0.0 # x position of the observer [cMpc/h]: x0 and y0 should be changed when g
 y0=0.0 # y position of the observer [cMpc/h]
 tan_LoS_x=0.06 # LoS direction: tan_LoS is needed to avoid having similar structures in a line of site
 tan_LoS_y=0.1 # LoS direction
-label= # label of the lightcone. Define only when needed
-./create_lightcone $odir/subgroup $side_length_lc $zmin $zmax $x0 $y0 $tan_LoS_x $tan_LoS_y > ${odir}/lightcone_${side_length_lc}sec${label}.txt 2> ${odir}/log_${side_length_lc}sec${label}.txt
+label= "" # label of the lightcone. Define only when needed
+./create_lightcone_UCHUU ${odir}/ $side_length_lc $zmin $zmax $x0 $y0 $tan_LoS_x $tan_LoS_y > ${odir}/lightcone_${side_length_lc}sec${label}.txt 2> ${odir}/log_${side_length_lc}sec${label}.txt
 
 
 ### create mock data from lightcone
-fname_lightcone=$odir/lightcone_5400sec${label}.txt # lightcone name to use
+fname_lightcone=$odir/lightcone_${side_length_lc}sec${label}.txt # lightcone name to use
 
 model_id=0 # 0: default -- DeLooze+14, sigma=0.2
 #model_id=1 # 1: Vallini+15, sigma=0.2
 #model_id=10 # 10: DeLooze+14, sigma=0.4
 #model_id=11 # 11: Vallini+15, sigma=0.4
 
-side_length=5400 #[arcsec]
+side_length=10800 #[arcsec]
 fmin=6e4 #[GHz]
 fmax=4e5 #[GHz]
 angular_resolution=4.2 #[arcsec]

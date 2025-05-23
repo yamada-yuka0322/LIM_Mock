@@ -3,6 +3,7 @@
 #include "math.h"
 #include "float.h"
 #include <string.h>
+#include <time.h>
 #include "hdf5.h"
 
 #include "constant.h"
@@ -10,12 +11,31 @@
 #include "proto.h"
 
 #define NSNAP_MAX 100
+#define MAX_PARAMS 100
+#define MAX_KEY_LEN 64
 
-void read_snapshot_ids(int snapshot_ids[], double r_box[], int *Nsnap);
+typedef struct {
+    char key[MAX_KEY_LEN];
+    double value;
+} Param;
+
+typedef struct {
+    Param params[MAX_PARAMS];
+    int count;
+} ParamDict;
+
+void read_redshifts(int snapshot_ids[], float redshifts[], double r_box[], int *Nsnap);
 void read_comdis_table(double redshift[], double *comdis_min, double *comdis_max);
+double get_mstar(double log_mass, double redshift, double smass_params[]);
+int get_smass_params(const ParamDict *dict, double smass_params[]);
+double get_SFR(double log_mass, double log_smass, double redshift, double SFR_params[]);
+int get_SFR_params(const ParamDict *dict, double SFR_params[]);
+double fmin(double a, double b);
+double fmax(double a, double b);
 
 int main(int argc, char *argv[])
 {
+	srand(time(NULL));
 	int i, j;
 
 	if(!(argc == 9))
@@ -65,10 +85,26 @@ int main(int argc, char *argv[])
 	double com_dis_start, com_dis_end, r_start;
     char name[NSNAP_MAX];
 
+	ParamDict smass_dict;
+    load_params("../params/Girelli.par", &smass_dict);
+	double smass_params[8];
+	get_smass_params(smass_dict, smass_params);
+
+	ParamDict SFR_dict;
+	load_params("../params/SIDES.par", &SFR_dict);
+	double SFR_params[24];
+	get_SFR_params(SFR_dict, SFR_params);
+
+
+
+
 	for(i = 0; i < Nsnap; i++)
 	{
 		char fname[256];
 		FILE *fp;
+		double z0, boxsize, com_dis_ref;
+		hsize_t dims[1];
+		int ngal;
 
         sprintf(name, "%.2f", redshifts[i]);
         for (j = 0; j < strlen(name); j++)
@@ -81,7 +117,7 @@ int main(int argc, char *argv[])
         sprintf(fname, "%s.MiniUchuu_halolist_%s.h5", path, name);
 		//sprintf(fname, "%s.MiniUchuu_halolist_%d.h5", path, snapshot_ids[i]);
 		
-        hid_t file_id = H5Fopen(filename, H5F_ACC_RDONLY, H5P_DEFAULT);
+        hid_t file_id = H5Fopen(fname, H5F_ACC_RDONLY, H5P_DEFAULT);
 
         hid_t dset = H5Dopen(file_id, "x", H5P_DEFAULT);
         hid_t space = H5Dget_space(dset);
@@ -161,7 +197,7 @@ int main(int argc, char *argv[])
 		// read galaxy data
 		int count = 0;
 		double x[3], v[3], rmass_half, log_mass, log_sfr, log_mstar, log_Z;
-        for (int k = 0; k < ngal; j++)
+        for (int k = 0; k < ngal; k++)
         {
             x[0] = _x[k];
             x[1] = _y[k];
@@ -170,7 +206,7 @@ int main(int argc, char *argv[])
             v[1] = _vy[k];
             v[2] = _vz[k];
             rmass_half = r_half[k];
-            log_mass = log10(_mass[k]);
+            log_mass = log10(_mass[k]/h);
 
             x[0] -= x0[0]; 
 			x[1] -= x0[1]; 
@@ -236,6 +272,9 @@ int main(int argc, char *argv[])
 			
 			// print //
 			double log_lumi_dis = log10( com_dis * ( 1.0 + znow ) * mpc / h) ; //cm
+			log_Z = -0.50;
+			log_mstar = get_mstar(log_mass, znow, smass_params[]);
+			log_sfr = get_SFR(log_mass, log_mstar, znow, SFR_params);
 		
 			fprintf(stdout, "%e %e %.4f %.4f %e %e %.4f %.4f %.4f\n", 
 				x_arcsec[0], 
@@ -244,7 +283,9 @@ int main(int argc, char *argv[])
 				log_lumi_dis, 
 				v[2], 
 				rmass_half, 
-				log_mass
+				log_sfr, 
+				log_mstar, 
+				log_Z
 			);
 			
 			count ++;
@@ -256,34 +297,6 @@ int main(int argc, char *argv[])
 	}
 
 	return 0;
-}
-
-void read_snapshot_ids(int snapshot_ids[], double r_box[], int *Nsnap)
-{
-	FILE *fp;
-	int i;
-
-	fp = fopen("./snapshot_ids.txt", "r");
-	if(fp == NULL)
-	{
-		fprintf(stderr, "can not open snapshot_ids.txt\n");
-		exit(1);
-	}
-
-	fscanf(fp, "%*s %d", Nsnap);
-	if( *Nsnap > NSNAP_MAX )
-	{
-		fprintf(stderr, "Error: Nsnap > NSNAP_MAX\n");
-		exit(1);
-	}
-
-	for(i = 0; i < *Nsnap; i++)
-	{
-		fscanf(fp, "%d %lf", &snapshot_ids[i], &r_box[i]);
-	}
-
-	fclose(fp);
-	fprintf(stderr, "# Loaded %d snapshot ids from ./snapshot_ids.txt\n", *Nsnap);
 }
 
 void read_redshifts(int snapshot_ids[], float redshifts[], double r_box[], int *Nsnap)
@@ -345,4 +358,216 @@ void read_comdis_table(double redshift[], double *comdis_min, double *comdis_max
 	}
 	
 	fclose(fp);
+}
+
+void load_params(const char *filename, ParamDict *dict) {
+    FILE *fp = fopen(filename, "r");
+    if (!fp) {
+        perror("Failed to open file");
+        exit(1);
+    }
+
+    char line[256];
+    dict->count = 0;
+
+    while (fgets(line, sizeof(line), fp)) {
+        // Skip comments and empty lines
+        if (line[0] == '#' || strlen(line) < 3) continue;
+
+        char key[MAX_KEY_LEN];
+        double value;
+        if (sscanf(line, "%s = %lf", key, &value) == 2) {
+            strncpy(dict->params[dict->count].key, key, MAX_KEY_LEN);
+            dict->params[dict->count].value = value;
+            dict->count++;
+        }
+    }
+
+    fclose(fp);
+}
+
+int get_param(const ParamDict *dict, const char *key, double *out_value) {
+    for (int i = 0; i < dict->count; i++) {
+        if (strcmp(dict->params[i].key, key) == 0) {
+            *out_value = dict->params[i].value;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+int get_smass_params(const ParamDict *dict, double smass_params[]){
+	const char *keys[] = { "B", "mu", "C", "nu", "D", "eta", "F", "E" };
+    const int nkeys = sizeof(keys) / sizeof(keys[0]);
+
+    for (int i = 0; i < nkeys; i++) {
+        if (get_param(dict, keys[i], &smass_params[i])) {
+            printf("%s = %f\n", keys[i], smass_params[i]);
+        } else {
+            printf("%s not found\n", keys[i]);
+            return 1;
+        }
+    }
+    return 0;
+}
+
+int get_SFR_params(const ParamDict *dict, double SFR_params[]){
+	const char *keys[] = { "alpha1",
+		"alpha2",
+    	"beta1",
+    	"beta2",
+    	"gamma",
+    	"Mt0",
+    	"qfrac0",
+    	"sigma0",
+    	"m0",
+    	"a0",
+    	"a1",
+    	"m1",
+    	"a2",
+    	"sigma_MS",
+    	"logBsb",
+    	"logx0",
+    	"Psb_hz",
+    	"slope_Psb",
+    	"z_Psb_knee",
+    	"Chab2Salp",
+    	"zmean_lowzcorr",
+    	"corr_zmean_lowzcorr",
+    	"zmax_lowzcorr",
+		"SFR_max" };
+    const int nkeys = sizeof(keys) / sizeof(keys[0]);
+
+    for (int i = 0; i < nkeys; i++) {
+        if (get_param(dict, keys[i], &SFR_params[i])) {
+            printf("%s = %f\n", keys[i], SFR_params[i]);
+        } else {
+            printf("%s not found\n", keys[i]);
+            return 1;
+        }
+    }
+    return 0;
+}
+
+double get_mstar(double log_mass, double redshift, double smass_params[]){
+	double B, mu, C, nu, D, eta, F, E;
+	double log_MA, A, gamma, beta;
+
+	B = smass_params[0];
+	mu = smass_params[0];
+	C = smass_params[0];
+	nu = smass_params[0];
+	D = smass_params[0];
+	eta = smass_params[0];
+	F = smass_params[0];
+	E = smass_params[0];
+
+	log_MA = B + redshift*mu;
+	A = C * pow((1+redshift),nu);
+	gamma = D * pow((1+redshift), eta);
+	beta = F * redshift + E;
+	double log_hA = log_mass - log_MA;
+	double hA = pow(10.0, log_hA);
+
+	double log_ratio = log10(2.0*A) -log10(pow(hA, -beta) + pow(hA, gamma));
+	double log_smass = log_mass + log_ratio;
+	return log_smass;
+}
+
+double get_SFR(double log_mass, double log_smass, double redshift, double SFR_params[]){
+	//Parameters to derive the quenched fraction
+	double alpha1 = SFR_params[0];
+	double alpha2 = SFR_params[1];
+	double beta1 = SFR_params[2];
+	double beta2 = SFR_params[3];
+	double gamma = SFR_params[4];
+	double Mt0 = SFR_params[5];
+	double qfrac0 = SFR_params[6];
+	double sigma0 = SFR_params[7];
+
+	//Parameters for the evolution of the main sequence fom Schreiber et al.
+	double m0 = SFR_params[8];
+	double a0 = SFR_params[9];
+	double a1 = SFR_params[10];
+	double m1 = SFR_params[11];
+	double a2 = SFR_params[12];
+
+	//Main sequence scatter parameters
+	double sigma_MS = SFR_params[13];
+	double logBsb = SFR_params[14];
+	double logx0 = SFR_params[15];
+
+	//Evolution of the fraction of starburst (based on Sargent+12)
+	double Psb_hz = SFR_params[16];
+	double slope_Psb = SFR_params[17];
+	double z_Psb_knee = SFR_params[18];
+
+	//conversion from Chabrier to Salpeter IMF, used because Schreiber is in Salpeter
+	double Chab2Salp = SFR_params[19];
+
+	//Correction at low-z of the Schreiber relation (see Bethermin+17)
+	double zmean_lowzcorr = SFR_params[20];
+	double corr_zmean_lowzcorr = SFR_params[21];
+	double zmax_lowzcorr = SFR_params[22];
+
+	//Maximum SFR allowed
+	double SFR_max = SFR_params[23];
+
+	//Quenched flag
+	int qflag;
+	double Mtz = Mt0 + alpha1 * redshift + alpha2 * pow(redshift, 2.0);
+	double sigmaz = sigma0 + beta1 * redshift + beta2 * pow(redshift, 2.0);
+	double qfrac0z = qfrac0 * pow((1.0 + redshift), gamma);
+
+	double erf_arg = (log_smass - Mtz) / sigmaz;
+    double erf_val = erf(erf_arg);
+    double Prob_SF = (1. - qfrac0z) * 0.5 * (1. - erf_val);
+
+    double Xuni = (double)rand() / (double)RAND_MAX;
+    qflag = (Xuni > Prob_SF);
+	if (qflag){
+		return 0.0;
+	}else{
+		double m_SF = log_smass + log10(Chab2Salp) - 9.0;
+		double r = log10(1 + redshift);
+		double expr = fmax(m_SF - m1 - a2 * r, 0.0);
+		double logSFRms_SF = m_SF - m0 + a0 * r - a1 * pow(expr, 2.0) - log10(Chab2Salp);
+		logSFRms_SF += corr_zmean_lowzcorr * (zmax_lowzcorr - fmin(redshift, zmax_lowzcorr) / (zmax_lowzcorr - zmean_lowzcorr));
+
+    	double Psb = Psb_hz + slope_Psb * (z_Psb_knee - fmin(redshift, z_Psb_knee));
+		Xuni = (double)rand() / (double)RAND_MAX;
+		int issb = (Xuni < Psb );
+
+		Xuni = (double)rand() / (double)RAND_MAX;
+		double SFR_SF = pow(10.0,  ( logSFRms_SF + sigma_MS * Xuni + logx0 + (double)issb * (logBsb - logx0) ));
+
+		int too_high_SFRs = (SFR_SF > SFR_max);
+		while(too_high_SFRs)
+		{
+			Xuni = (double)rand() / (double)RAND_MAX;
+			SFR_SF = pow(10.0,  ( logSFRms_SF + sigma_MS * Xuni + logx0 + (double)issb * (logBsb - logx0) ));
+			too_high_SFRs = (SFR_SF > SFR_max);
+		}
+
+		return SFR_SF;
+	}
+
+}
+
+double fmax(double a, double b){
+	if (a>b)
+	{
+		return a;
+	}else{
+		return b;
+	}
+}
+
+double fmin(double a, double b){
+	if (a<b)
+	{
+		return a;
+	}else{
+		return b;
+	}
 }

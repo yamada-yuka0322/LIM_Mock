@@ -31,7 +31,7 @@ line_dict = {
 SFR_FIR = 3.5e-44
 Lsun = 3.828e33  # erg/s
 
-def calc_line_luminosity(args, z, log_sfr, log_mstar, log_Z, line_name):
+def calc_line_luminosity(args, log_sfr, log_mstar, line_name):
     
     ssfr = 10 ** (log_sfr - log_mstar)
     logL_FIR = log_sfr + np.log10( SFR_FIR / Lsun ) # [Lsun]: See eq. 23 of Fonseca+2017

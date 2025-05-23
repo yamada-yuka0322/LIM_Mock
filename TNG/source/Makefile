@@ -1,4 +1,14 @@
-SYSTYPE="MyLapTop"
+SYSTYPE ?= "MyLapTop"
+ifeq ($(SYSTYPE), Docker)
+CC       =  cc
+OPTIMIZE = -O3 -Wall
+GSL_INCL = -I/usr/include
+GSL_LIBS = -L/usr/lib -lgsl -lgslcblas
+FITS_INCL = -I/usr/include
+FITS_LIBS = -L/usr/lib -lcfitsio
+HDF5INCL = -I/usr/include/hdf5/serial
+HDF5LIB  = -L/usr/lib/x86_64-linux-gnu/hdf5/serial -lhdf5 -lz
+endif
 
 ifeq ($(SYSTYPE), "MyLapTop")
 CC       =  cc
@@ -63,7 +73,7 @@ create_mock: $(CREATE_MOCKOBJ)
 calc_intensity_distribution: $(CALC_INTENSITY_DISTRIBUTIONOBJ)
 	$(CC) $(CFLAGS) $(CALC_INTENSITY_DISTRIBUTIONOBJ) $(LIBS) -o calc_intensity_distribution
 
-$(PRINT_SUbGROUPOBJ): $(SRCH)
+$(PRINT_SUBGROUPOBJ): $(SRCH)
 $(CREATE_LIGHTCONEOBJ): $(SRCH)
 $(CREATE_MOCKOBJ): $(SRCH)
 $(CALC_INTENSITY_DISTRIBUTIONOBJ): $(SRCH)
