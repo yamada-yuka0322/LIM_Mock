@@ -26,6 +26,7 @@ import multiprocessing
 
 Oiii = 5.997e5 #[GHz]
 ha = 4.856e5 #[GHz]
+pa = 1.599e5 #[GHz]
 c = 2.9979e10 #[cm/s]
 Jy = 1.0e-23
 arcsec = 4.848136811094e-6
@@ -95,6 +96,22 @@ def make_mock(path, params):
     intensity_valid = flux_valid / dflist[indices_valid[:,2]] /Jy / (params.resolution * arcsec)**2 #[Jy/sr]
     
     np.add.at(Ha_intensity, (indices_valid[:,0], indices_valid[:,1], indices_valid[:,2]), intensity_valid)
+    ########################### Pa intensity
+    Pa_intensity = np.zeros([Nx, Nx, Nz], dtype=np.float32)
+    
+    freq_obs = pa/(1 + np.array(df['obsz']))*1e9 #[Hz]
+    iz = np.searchsorted(flist, freq_obs, side='right') - 1
+    
+    indices = np.array([ix, iy, iz]).T
+    valid_mask = np.all((indices >=0)&(indices < npix), axis=1)
+    
+    indices_valid = indices[valid_mask]
+    lumi_dist_valid = lumi_dist[valid_mask]
+    lumi_valid = np.array(df['Pa'])[valid_mask] #[erg/s]
+    flux_valid = lumi_valid / (4. * np.pi * lumi_dist_valid**2) #[erg/s/cm^2]
+    intensity_valid = flux_valid / dflist[indices_valid[:,2]] /Jy / (params.resolution * arcsec)**2 #[Jy/sr]
+    
+    np.add.at(Pa_intensity, (indices_valid[:,0], indices_valid[:,1], indices_valid[:,2]), intensity_valid)
     
     ########################### [OIII] intensity
     OIII_intensity = np.zeros([Nx, Nx, Nz], dtype=np.float32)
@@ -113,9 +130,9 @@ def make_mock(path, params):
     
     np.add.at(OIII_intensity, (indices_valid[:,0], indices_valid[:,1], indices_valid[:,2]), intensity_valid)
     
-    total_intensity = Ha_intensity + OIII_intensity
+    total_intensity = Ha_intensity + OIII_intensity + Pa_intensity
     
-    return total_intensity, Ha_intensity, OIII_intensity
+    return total_intensity, Ha_intensity, OIII_intensity, Pa_intensity
 
 ####################################################################################################
 def make_foreground(ra, dec, params):
@@ -123,12 +140,12 @@ def make_foreground(ra, dec, params):
     star_path = '/mnt/data_cat3/yuka/data/LIM_mock/stars/output.fits'
     star, mask_ra, mask_dec = Star(ra, dec, params, flist, star_path)
     dgl = DGL(ra, dec, params, flist)
-    mask = Mask(ra, dec, params, mask_ra, mask_dec)
-    zodiac = Zodiac(ra, dec, params, flist)
+    mask, star_mask = Mask(ra, dec, params, mask_ra, mask_dec)
+    zodiac = Zodiac(32, ra, dec, params, flist)
     
-    total = (star + dgl + zodiac) * mask[:, :, np.newaxis]
+    total = (star + dgl + zodiac) * (mask*star_mask)[:, :, np.newaxis]
     
-    return star, dgl, zodiac, mask, total
+    return star, dgl, zodiac, mask, star_mask, total
 
 #####################################################
 def Star(center_ra, center_dec, params, flist, path):
@@ -160,9 +177,19 @@ def Star(center_ra, center_dec, params, flist, path):
     
     _path = '/mnt/data_cat3/yuka/data/grp/redcat/trds/grid/phoenix/'
     
+    bright_stars = pd.DataFrame({})
+    
+    bright_star_ra = []
+    bright_star_ira = []
+    bright_star_dec = []
+    bright_star_idec = []
+    bright_star_path = []
+    bright_star_logg = []
+    
     for i in data[stars]:
         _ra = i['RAJ2000']
         _dec = i['DECJ2000']
+        _J = i['J']
         
         i_ra = (_ra - ra_min) / params.resolution *3600
         i_ra = i_ra.astype(np.int32)
@@ -197,6 +224,24 @@ def Star(center_ra, center_dec, params, flist, path):
             F = f_nu / (params.resolution * arcsec)**2 #[Jy/sr]
             
             star_intensity[i_dec, i_ra] += F
+            if(_J<16):
+                bright_star_ra.append(_ra)
+                bright_star_dec.append(_dec)
+                bright_star_ira.append(i_ra)
+                bright_star_idec.append(i_dec)
+                bright_star_path.append(filename)
+                bright_star_logg.append(column)
+    
+    bright_stars['ra'] = bright_star_ra
+    bright_stars['i_ra'] = bright_star_ira
+    bright_stars['dec'] = bright_star_dec
+    bright_stars['i_dec'] = bright_star_idec
+    bright_stars['path'] = bright_star_path
+    bright_stars['logg'] = bright_star_logg
+    
+    table = Table.from_pandas(bright_stars)
+    table.write('../output/bright_stars.fits', format='fits', overwrite=True)
+    
     return star_intensity, mask_ra, mask_dec
             
 
@@ -314,19 +359,6 @@ def DGL(center_ra, center_dec, params, flist):
 
 ######################################################################################################
 
-#def ZL_spectrum(wavelength):
-    #"""
-    #Paramter
-    #wavelength: in um
-
-    #----------------------------------------------------
-    #Output
-    #ZL: ZL intensity in Jy/sr
-    #"""
-    #ZL = 0.354*((wavelength < 1.25) + (wavelength/1.25)**(-0.8)*(wavelength>=1.25)) #MJy/sr
-    #ZL *= 1e6
-    #return ZL
-    
 def interpolate_zodi(result_coarse, Nx):
     Nz = result_coarse.shape[-1]
     x = np.linspace(0, 1, result_coarse.shape[0])
@@ -344,20 +376,32 @@ def interpolate_zodi(result_coarse, Nx):
     result_fine = interp.reshape((Nx, Nx, Nz))
     return result_fine
 
+def evaluate_zodiac_for_day(args):
+    day_index, day_string, wavelength, ra_flat, dec_flat, Nx = args
+    result = np.zeros((Nx, Nx, len(wavelength)))
 
-def Zodiac(center_ra, center_dec, params, flist):
+    for j, l in enumerate(wavelength):
+        model = zodipy.Model(l * u.micron)
+        skycoords = SkyCoord(ra=ra_flat * u.deg, dec=dec_flat * u.deg,
+                             frame="icrs", obstime=day_string)
+        intensity = model.evaluate(skycoords).value  # [MJy/sr]
+        result[:, :, j] = intensity.reshape((Nx, Nx)) * 1e6  # [Jy/sr]
+
+    return result
+
+
+def Zodiac(coarse, center_ra, center_dec, params, flist, day_bin=2, count=100, nprocesses=None):
+
     center_frequency = (flist[1::]+flist[:-1:])/2.0
-    lambdas = c * 1e4 / center_frequency  # μm
-    spectral_component = ZL_spectrum(lambdas)
-    
-    Nx = int(2.0*3600*params.radius / params.resolution)
-    Nz = len(flist) - 1
+    wavelength = c / center_frequency * 1e4  # [um]
+ 
+    Nx = int(2.0*3600*params.radius / params.resolution/coarse)
     
     ramin = center_ra - params.radius
     decmin = center_dec - params.radius
     ramax = center_ra + params.radius
     decmax = center_dec + params.radius
-
+    
     ra_grid, dec_grid = np.meshgrid(
         np.linspace(ramin, ramax, Nx),
         np.linspace(decmin, decmax, Nx)
@@ -365,16 +409,23 @@ def Zodiac(center_ra, center_dec, params, flist):
     ra_flat = ra_grid.ravel()
     dec_flat = dec_grid.ravel()
 
-    coords = SkyCoord(ra=ra_flat * u.deg, dec=dec_flat * u.deg, frame='icrs')
-    ecl = coords.transform_to(GeocentricTrueEcliptic())
-    beta = ecl.lat.value  # deg
+    init_day = datetime.date(2025, 3, 22)
+    args_list = []
+    for i in range(count):
+        day = init_day + datetime.timedelta(days=day_bin * i)
+        day_string = day.strftime('%Y-%m-%d')
+        args_list.append((i, day_string, wavelength, ra_flat, dec_flat, Nx))
 
-    spatial_component = np.exp(-(beta / 20.0) ** 2) + 0.1 # unitless, normalized
+    # 並列化実行
+    with multiprocessing.Pool(multiprocessing.cpu_count()) as pool:
+        results = pool.map(evaluate_zodiac_for_day, args_list)
 
-    zodiac_vals = np.outer(spatial_component, spectral_component)
-    zodiac_emission = zodiac_vals.reshape((Nx, Nx, Nz))  # Jy/sr
-
-    return zodiac_emission
+    # 結果をまとめて4次元配列に
+    full_spectra = np.mean(results, axis=0)  # shape:  (Nx/32, Nx/32, Nz)
+    
+    full_Nx = int(2.0*3600*params.radius / params.resolution)
+    zodi_final = interpolate_zodi(full_spectra, full_Nx)
+    return zodi_final
 
 #################################################################################################
 
@@ -404,7 +455,7 @@ def Mask(center_ra, center_dec, params, mask_ra, mask_dec):
             radius = 2
             x_min, x_max = max(0, x - radius), min(Nx, x + radius + 1)
             y_min, y_max = max(0, y - radius), min(Nx, y + radius + 1)
-            mask[y_min:y_max, x_min:x_max] = 0.0
+            star_mask[y_min:y_max, x_min:x_max] = 0.0
     
-    return mask
+    return mask, star_mask
         
