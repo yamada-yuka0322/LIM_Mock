@@ -1,0 +1,6 @@
+numpy
+astropy
+matplotlib
+pandas
+h5py
+fsps
