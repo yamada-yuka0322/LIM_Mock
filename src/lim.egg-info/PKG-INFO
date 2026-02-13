@@ -1,0 +1,24 @@
+Metadata-Version: 2.1
+Name: lim
+Version: 0.1
+Summary: making LIM mocks and foregrounds
+Home-page: https://github.com/yamada-yuka0322/PFS_imaging
+Author: Yuka Yamada
+Author-email: yamada-yuka0322@g.ecc.u-tokyo.ac.jp
+Maintainer: Yuka Yamada
+Maintainer-email: yamada-yuka0322@g.ecc.u-tokyo.ac.jp
+License: MIT
+Classifier: Development Status :: 2 - Pre-Alpha
+Classifier: Intended Audience :: Science/Research
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Operating System :: OS Independent
+Classifier: Programming Language :: Python :: 3
+Description-Content-Type: text/markdown
+Requires-Dist: numpy
+Requires-Dist: astropy
+Requires-Dist: matplotlib
+Requires-Dist: pandas
+Requires-Dist: h5py
+Requires-Dist: fsps
+
+code to generate LIM mocks and foregrounds
